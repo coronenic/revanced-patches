@@ -30,13 +30,17 @@ jobs:
       - name: Cache Gradle
         uses: burrunan/gradle-cache-action@v2
 
-      # GITHUB_TOKEN is provided automatically and grants read access to the
-      # ReVanced GitHub Packages registry (patcher + gradle plugin), which is
-      # not resolvable anonymously. This is why the bundle builds on CI even
-      # though a local build needs a personal access token.
+      # Auth for GitHub Packages (the ReVanced registry is not readable anonymously):
+      #  - GITHUB_TOKEN (+ auto GITHUB_ACTOR) satisfies pluginManagement in
+      #    settings.gradle.kts, resolving the app.revanced.patches plugin.
+      #  - The plugin registers a separate credentialed repo for the patcher
+      #    dependency that reads the githubPackagesUsername/Password Gradle
+      #    properties, supplied here via ORG_GRADLE_PROJECT_* env vars.
       - name: Build patch bundle (.rvp)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ORG_GRADLE_PROJECT_githubPackagesUsername: ${{ github.actor }}
+          ORG_GRADLE_PROJECT_githubPackagesPassword: ${{ secrets.GITHUB_TOKEN }}
         run: ./gradlew build --no-daemon
 
       - name: Upload .rvp artifact

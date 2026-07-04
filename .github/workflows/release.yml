@@ -31,13 +31,14 @@ jobs:
       - name: Cache Gradle
         uses: burrunan/gradle-cache-action@v2
 
-      # The automatic GITHUB_TOKEN authenticates to GitHub Packages (the public ReVanced
-      # registry is not readable anonymously). `buildAndroid` D8-compiles the patches to
-      # DEX and merges it into the same .rvp, so the bundle works on both the CLI and
-      # ReVanced Manager (Android).
+      # Auth for GitHub Packages (see build.yml for the two-consumer explanation).
+      # buildAndroid D8-compiles the patches to DEX and merges it into the same .rvp,
+      # so the bundle works on both the CLI and ReVanced Manager (Android).
       - name: Build patch bundle (.rvp)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ORG_GRADLE_PROJECT_githubPackagesUsername: ${{ github.actor }}
+          ORG_GRADLE_PROJECT_githubPackagesPassword: ${{ secrets.GITHUB_TOKEN }}
         run: ./gradlew build buildAndroid --no-daemon
 
       - name: Select the patch bundle
