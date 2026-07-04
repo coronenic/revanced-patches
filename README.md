@@ -18,6 +18,7 @@ Alternatively, download the `.rvp` from [Releases](https://github.com/coronenic/
 
 | Patch | Description |
 | --- | --- |
+| `Spoof signature` | Presents the original signing certificate to the app's own tamper checks so the re-signed build passes client- and server-side verification (fixes the blank 실시간 베스트 feed and error 2109). |
 | `Add ReVanced patch version field` | Adds a "Revanced 패치 버전" field below the current and latest version in Settings > About. |
 
 ## License
