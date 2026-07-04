@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      # Minimal, tag-triggered release. Push a version tag (e.g. v1.0.0) to cut a release.
+      # NOTE: the .rvp version comes from `version` in gradle.properties, NOT the tag —
+      # bump gradle.properties to match before tagging.
+      - "v*"
+
+jobs:
+  release:
+    name: Release
+    permissions:
+      contents: write   # create the GitHub Release
+      packages: read    # read ReVanced Patcher + gradle plugin from GitHub Packages
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Cache Gradle
+        uses: burrunan/gradle-cache-action@v2
+
+      # The automatic GITHUB_TOKEN authenticates to GitHub Packages (the public ReVanced
+      # registry is not readable anonymously). `buildAndroid` D8-compiles the patches to
+      # DEX and merges it into the same .rvp, so the bundle works on both the CLI and
+      # ReVanced Manager (Android).
+      - name: Build patch bundle (.rvp)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./gradlew build buildAndroid --no-daemon
+
+      - name: Select the patch bundle
+        id: bundle
+        run: |
+          file=$(find patches/build/libs -name '*.rvp' ! -name '*sources*' ! -name '*javadoc*' | head -n1)
+          if [ -z "$file" ]; then
+            echo "No .rvp bundle found" >&2
+            exit 1
+          fi
+          echo "path=$file" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "${{ github.ref_name }}" "${{ steps.bundle.outputs.path }}" --title "${{ github.ref_name }}" --generate-notes

@@ -1,0 +1,50 @@
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
+    branches:
+      - main
+      - dev
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Cache Gradle
+        uses: burrunan/gradle-cache-action@v2
+
+      # GITHUB_TOKEN is provided automatically and grants read access to the
+      # ReVanced GitHub Packages registry (patcher + gradle plugin), which is
+      # not resolvable anonymously. This is why the bundle builds on CI even
+      # though a local build needs a personal access token.
+      - name: Build patch bundle (.rvp)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./gradlew build --no-daemon
+
+      - name: Upload .rvp artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: patches
+          path: |
+            patches/build/libs/*.rvp
+            !patches/build/libs/*sources*.rvp
+            !patches/build/libs/*javadoc*.rvp
+          if-no-files-found: error
