@@ -9,8 +9,12 @@ Source for the signature-spoof extension merged by `Spoof signature`
 - `SignatureSpoof.java` — holds the original DCInside signing certificate (base64 DER),
   `wrap(PackageManager)` and `maybeSpoof(PackageInfo, flags)`. Injects the original
   `Signature` into the app's own `getPackageInfo(..., GET_SIGNATURES / GET_SIGNING_CERTIFICATES)`.
-- `SpoofPackageManager.java` — **auto-generated** `PackageManager` delegate (every abstract
-  method forwards to the real instance; only `getPackageInfo` is intercepted).
+- `SpoofPackageManager.java` — **auto-generated** `PackageManager` delegate. Every
+  *overridable instance* method forwards to the real instance — not only the abstract
+  ones: many `PackageManager` methods are concrete base stubs that throw
+  `UnsupportedOperationException` (the real impl lives in the hidden
+  `ApplicationPackageManager`), so skipping them crashes the host the moment one is
+  called (e.g. `getInstallSourceInfo`). Only the `getPackageInfo` overloads are intercepted.
 - `Gen.java` — regenerates `SpoofPackageManager.java` from an `android.jar` by reflection.
 
 ## Regenerate the dex (no gradle needed)
