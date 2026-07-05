@@ -11,22 +11,23 @@ import java.io.File;
 import java.lang.ref.WeakReference;
 
 /**
- * "Upload an audio file as a voice reply" — v1 (copy/remux of AAC-bearing containers to .m4a).
+ * "Upload an audio file as a voice reply": normalizes any audio the device can decode into the
+ * MPEG-4/AAC clip the recorder produces (remux AAC-bearing containers; transcode others).
  *
  * The patch adds an upload button (id {@code voice_recorder_file_pick}) to the record tab of
  * DCInside's VoiceRecordView and injects a call to {@link #attach(View)} at the end of the view's
  * constructor. It also injects two stable-named accessor methods onto the (obfuscated) view, which
  * we call by reflection:
  * <ul>
- *   <li>{@code String revancedVoiceTargetPath()} — path of the view's record output file
- *       ({@code getInputRecord()}); the file recording writes and upload reads.</li>
+ *   <li>{@code File revancedVoiceTarget()} — the view's record output file ({@code getInputRecord()});
+ *       the file recording writes and upload reads.</li>
  *   <li>{@code void revancedVoiceFinalize()} — reuses the view's own stop/finalize so the imported
  *       clip is presented as a finished recording (PLAY_STATE + duration + re-record shown).</li>
  * </ul>
  *
  * Flow: upload button -> {@link AudioPickerActivity} (SAF {@code ACTION_GET_CONTENT audio/*}) ->
- * {@link #deliver(Uri)} -> remux the picked AAC into the record file -> finalize. Submit then
- * uploads it unchanged (RECORD input type). Non-AAC input is refused with a message.
+ * {@link #deliver(Uri)} -> normalize the picked audio into the record file -> finalize. Submit then
+ * uploads it unchanged (RECORD input type).
  *
  * Uses named nested classes rather than lambdas/anonymous classes: the extension compiles against
  * android.jar with the JDK bootclasspath stripped (no {@code LambdaMetafactory}), and d8 rejects
@@ -78,7 +79,7 @@ public final class VoiceFilePicker {
             toast(recordView, "오디오 파일을 불러올 수 없습니다.");
             return;
         }
-        toast(recordView, "오디오 파일을 불러오는 중...");
+        toast(recordView, "오디오를 변환하는 중...");
         new Thread(new ImportTask(appContext, uri, target, recordView),
                 "revanced-voice-import").start();
     }
@@ -164,7 +165,7 @@ public final class VoiceFilePicker {
             if (ok) {
                 invokeVoid(recordView, M_FINALIZE);
             } else {
-                toast(recordView, "m4a(AAC) 오디오 파일만 지원합니다.");
+                toast(recordView, "오디오 변환에 실패했습니다.");
             }
         }
     }
