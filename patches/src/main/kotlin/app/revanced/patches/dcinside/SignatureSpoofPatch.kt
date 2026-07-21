@@ -36,7 +36,7 @@ val spoofSignaturePatch = bytecodePatch(
     name = "Spoof signature",
     description = "Presents the original signing certificate to the app's own tamper checks " +
         "so the re-signed build passes client- and server-side verification " +
-        "(fixes the blank 실시간 베스트 feed and error 2109).",
+        "(fixes the blank 실시간 베스트 feed, error 2109, and the intermittent \"error\" popup on post submission).",
     use = true,
 ) {
     compatibleWith("com.dcinside.app.android")
