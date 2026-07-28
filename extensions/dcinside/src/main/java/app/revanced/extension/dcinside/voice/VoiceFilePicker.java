@@ -10,9 +10,12 @@ import android.widget.Toast;
 import java.io.File;
 import java.lang.ref.WeakReference;
 
+import app.revanced.extension.dcinside.settings.Settings;
+
 /**
  * "Upload an audio file as a voice reply": normalizes any audio the device can decode into the
- * MPEG-4/AAC clip the recorder produces (remux AAC-bearing containers; transcode others).
+ * MPEG-4/AAC clip the recorder produces — copy an audio-only .m4a, remux other AAC containers,
+ * transcode everything else (see {@link AudioNormalizer}).
  *
  * The patch adds an upload button (id {@code voice_recorder_file_pick}) to the record tab of
  * DCInside's VoiceRecordView and injects a call to {@link #attach(View)} at the end of the view's
@@ -38,6 +41,13 @@ public final class VoiceFilePicker {
 
     private static final String M_TARGET = "revancedVoiceTarget";
     private static final String M_FINALIZE = "revancedVoiceFinalize";
+
+    /**
+     * Switch registered by {@code VoiceFilePickerPatch}: upload the picked file byte-for-byte, even
+     * when it is not the MPEG-4/AAC the recorder produces. Off by default — whether the server
+     * accepts a foreign format is unverified (see local/notes/voice-file-picker-spec.md, tier (c)).
+     */
+    private static final String KEY_FORCE_ORIGINAL_FORMAT = "voice_force_original_format";
 
     /** The VoiceRecordView awaiting a pick result. Single-flight; only one picker is open at a time. */
     private static WeakReference<View> pendingView = new WeakReference<View>(null);
@@ -79,8 +89,8 @@ public final class VoiceFilePicker {
             toast(recordView, "오디오 파일을 불러올 수 없습니다.");
             return;
         }
-        toast(recordView, "오디오를 변환하는 중...");
-        new Thread(new ImportTask(appContext, uri, target, recordView),
+        boolean forceOriginal = Settings.isEnabled(recordView.getContext(), KEY_FORCE_ORIGINAL_FORMAT);
+        new Thread(new ImportTask(appContext, uri, target, recordView, forceOriginal),
                 "revanced-voice-import").start();
     }
 
@@ -129,43 +139,77 @@ public final class VoiceFilePicker {
         }
     }
 
-    /** Background: remux the picked audio into the record file, then hand off to the UI thread. */
+    /**
+     * Background: work out what the picked audio needs, announce it only if that is a real
+     * conversion, write it into the record file, then hand off to the UI thread.
+     */
     private static final class ImportTask implements Runnable {
         private final Context context;
         private final Uri source;
         private final File target;
         private final View recordView;
+        private final boolean forceOriginal;
 
-        ImportTask(Context context, Uri source, File target, View recordView) {
+        ImportTask(Context context, Uri source, File target, View recordView, boolean forceOriginal) {
             this.context = context;
             this.source = source;
             this.target = target;
             this.recordView = recordView;
+            this.forceOriginal = forceOriginal;
         }
 
         @Override
         public void run() {
-            boolean ok = AudioNormalizer.toM4a(context, source, target);
-            recordView.post(new FinishTask(recordView, ok));
+            int plan = forceOriginal ? AudioNormalizer.PLAN_COPY : AudioNormalizer.plan(context, source);
+            if (plan == AudioNormalizer.PLAN_UNSUPPORTED) {
+                recordView.post(new FinishTask(recordView, "지원하지 않는 오디오 파일입니다."));
+                return;
+            }
+            // A copy is instant; only a remux/transcode is worth telling the user to wait for.
+            if (plan != AudioNormalizer.PLAN_COPY) {
+                recordView.post(new ToastTask(recordView, "오디오를 변환하는 중..."));
+            }
+            boolean ok = AudioNormalizer.normalize(context, source, target, plan);
+            recordView.post(new FinishTask(recordView, ok ? null
+                    : plan == AudioNormalizer.PLAN_COPY
+                    ? "오디오 파일을 불러올 수 없습니다."
+                    : "오디오 변환에 실패했습니다."));
         }
     }
 
-    /** UI thread: present the imported clip as a finished recording, or report an unsupported file. */
-    private static final class FinishTask implements Runnable {
+    /** UI thread: a message from the import thread. */
+    private static final class ToastTask implements Runnable {
         private final View recordView;
-        private final boolean ok;
+        private final String message;
 
-        FinishTask(View recordView, boolean ok) {
+        ToastTask(View recordView, String message) {
             this.recordView = recordView;
-            this.ok = ok;
+            this.message = message;
         }
 
         @Override
         public void run() {
-            if (ok) {
+            toast(recordView, message);
+        }
+    }
+
+    /** UI thread: present the imported clip as a finished recording, or report why it was refused. */
+    private static final class FinishTask implements Runnable {
+        private final View recordView;
+        private final String failure;
+
+        /** @param failure the message to show, or null when the import succeeded. */
+        FinishTask(View recordView, String failure) {
+            this.recordView = recordView;
+            this.failure = failure;
+        }
+
+        @Override
+        public void run() {
+            if (failure == null) {
                 invokeVoid(recordView, M_FINALIZE);
             } else {
-                toast(recordView, "오디오 변환에 실패했습니다.");
+                toast(recordView, failure);
             }
         }
     }

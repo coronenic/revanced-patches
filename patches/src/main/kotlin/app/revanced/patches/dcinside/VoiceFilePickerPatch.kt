@@ -13,10 +13,11 @@ import org.w3c.dom.Element
 /**
  * Adds an "upload an audio file" source to the DCInside voice-reply composer's 녹음하기 (record) tab.
  *
- * v1 (see local/notes/voice-file-picker-spec.md): the user picks an audio file; any AAC-bearing
- * container (.m4a/.mp4/.aac/…) is remuxed to the MPEG-4/AAC clip the recorder itself produces and
- * presented as a finished recording, so the existing submit path uploads it unchanged. Non-AAC input
- * is refused (transcoding is deferred to v1.1).
+ * See local/notes/voice-file-picker-spec.md: the user picks an audio file, which is normalized to the
+ * MPEG-4/AAC clip the recorder itself produces (copied when it already is one, remuxed when the AAC
+ * sits in another container, transcoded otherwise) and presented as a finished recording, so the
+ * existing submit path uploads it unchanged. The "원본 오디오 포맷 강제 사용" setting registered below
+ * skips normalizing entirely and uploads the picked bytes as they are.
  *
  * Runtime logic lives in the extension (extensions/dcinside .../voice), prebuilt to
  * dcinside/voice-file-picker.rve. The composer view (com.dcinside.app.voice, obfuscated) exposes
@@ -86,17 +87,26 @@ val voiceFilePickerResourcePatch = resourcePatch(
 
 val voiceFilePickerPatch = bytecodePatch(
     name = "Voice reply file upload",
-    description = "Adds an upload button to the voice-reply record tab so an existing .m4a (AAC) " +
-        "audio file can be sent as a voice reply, like a recording.",
+    description = "Adds an upload button to the voice-reply record tab so an existing audio file " +
+        "can be sent as a voice reply, like a recording. Audio that is not already the MPEG-4/AAC " +
+        "the recorder writes is converted, unless the ReVanced settings say to keep it as-is.",
     use = true,
 ) {
     compatibleWith("com.dcinside.app.android")
 
-    dependsOn(voiceFilePickerResourcePatch)
+    dependsOn(voiceFilePickerResourcePatch, revancedSettingsPatch)
 
     extendWith("dcinside/voice-file-picker.rve")
 
     apply {
+        // Key and default are read back by VoiceFilePicker.KEY_FORCE_ORIGINAL_FORMAT.
+        addSwitchSetting(
+            key = "voice_force_original_format",
+            title = "원본 오디오 포맷 강제 사용",
+            summary = "변환하지 않고 고른 파일을 그대로 올립니다. 서버가 받아주는 포맷인지는 보장되지 않습니다.",
+            defaultValue = false,
+        )
+
         // The composer view: keeps the real public getInputRecord():File (creates the cache "voice" file).
         val voiceClass = classBy { classDef ->
             classDef.type.startsWith("Lcom/dcinside/app/voice/") &&
