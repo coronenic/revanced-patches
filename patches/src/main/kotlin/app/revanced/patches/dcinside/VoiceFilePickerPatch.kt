@@ -68,6 +68,26 @@ val voiceFilePickerResourcePatch = resourcePatch(
             upload.setAttribute("app:layout_constraintTop_toTopOf", "@id/voice_recorder_icon")
             upload.setAttribute("app:layout_constraintBottom_toBottomOf", "@id/voice_recorder_icon")
             recordArea.appendChild(upload)
+
+            // A slim conversion progress bar across the bottom of the record area (81dp tall, so
+            // there is room below the 42dp record button). Hidden until an import converts something;
+            // VoiceFilePicker drives it.
+            val progress = doc.createElement("ProgressBar")
+            progress.setAttribute("android:id", "@+id/voice_recorder_convert_progress")
+            progress.setAttribute("style", "@style/Widget.AppCompat.ProgressBar.Horizontal")
+            progress.setAttribute("android:layout_width", "0dp")
+            progress.setAttribute("android:layout_height", "4dp")
+            progress.setAttribute("android:visibility", "gone")
+            progress.setAttribute("android:max", "100")
+            progress.setAttribute("android:progressTint", "?attr/colorAccent")
+            progress.setAttribute("android:indeterminateTint", "?attr/colorAccent")
+            progress.setAttribute("android:layout_marginStart", "25dp")
+            progress.setAttribute("android:layout_marginEnd", "25dp")
+            progress.setAttribute("android:layout_marginBottom", "6dp")
+            progress.setAttribute("app:layout_constraintStart_toStartOf", "parent")
+            progress.setAttribute("app:layout_constraintEnd_toEndOf", "parent")
+            progress.setAttribute("app:layout_constraintBottom_toBottomOf", "parent")
+            recordArea.appendChild(progress)
         }
 
         // 2. Register the transparent picker proxy activity (extension class).

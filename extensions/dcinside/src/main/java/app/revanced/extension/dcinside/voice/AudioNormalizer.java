@@ -101,16 +101,32 @@ final class AudioNormalizer {
 
     // --- execution ----------------------------------------------------------------------------
 
+    /** How far a conversion has got, 0-100, called on the thread driving {@link #normalize}. */
+    interface Progress {
+        void onProgress(int percent);
+    }
+
     /**
      * Carry out {@code plan} from {@link #plan} (or {@link #PLAN_COPY} when the user forces the
      * original format).
      *
+     * @param progress notified as the conversion advances; null, or never called, when there is
+     *                 nothing to convert or the source does not say how long it is.
      * @return true if {@code dst} now holds the clip to upload; false (and no {@code dst}) on failure.
      */
-    static boolean normalize(Context context, Uri src, File dst, int plan) {
-        boolean ok = plan == PLAN_COPY ? copy(context, src, dst) : convert(context, src, dst);
+    static boolean normalize(Context context, Uri src, File dst, int plan, Progress progress) {
+        boolean ok = plan == PLAN_COPY ? copy(context, src, dst) : convert(context, src, dst, progress);
         if (!ok) deleteQuietly(dst);
         return ok;
+    }
+
+    /** Report only whole percent changes: at most a hundred hops to whoever is listening. */
+    private static int report(Progress progress, int reported, long done, long total) {
+        if (progress == null || total <= 0) return reported;
+        int percent = (int) Math.min(100L, 100L * done / total);
+        if (percent <= reported) return reported;
+        progress.onProgress(percent);
+        return percent;
     }
 
     private static boolean copy(Context context, Uri src, File dst) {
@@ -137,7 +153,7 @@ final class AudioNormalizer {
     }
 
     /** Remux or transcode, decided by the codec the source actually carries. */
-    private static boolean convert(Context context, Uri src, File dst) {
+    private static boolean convert(Context context, Uri src, File dst, Progress progress) {
         MediaExtractor extractor = new MediaExtractor();
         try {
             extractor.setDataSource(context, src, null);
@@ -157,9 +173,17 @@ final class AudioNormalizer {
             }
             if (audioTrack < 0) return false;
 
-            return MediaFormat.MIMETYPE_AUDIO_AAC.equals(mime)
-                    ? remux(extractor, audioTrack, format, dst)
-                    : transcode(extractor, audioTrack, format, dst);
+            // Without a duration there is nothing to measure progress against; the caller then
+            // leaves its indicator indeterminate rather than inventing a number.
+            long durationUs = format.containsKey(MediaFormat.KEY_DURATION)
+                    ? format.getLong(MediaFormat.KEY_DURATION)
+                    : 0;
+
+            boolean ok = MediaFormat.MIMETYPE_AUDIO_AAC.equals(mime)
+                    ? remux(extractor, audioTrack, format, dst, progress, durationUs)
+                    : transcode(extractor, audioTrack, format, dst, progress, durationUs);
+            if (ok && progress != null) progress.onProgress(100);
+            return ok;
         } catch (Throwable t) {
             return false;
         } finally {
@@ -169,7 +193,8 @@ final class AudioNormalizer {
 
     // --- AAC container -> MPEG-4, no re-encode ------------------------------------------------
 
-    private static boolean remux(MediaExtractor extractor, int track, MediaFormat format, File dst) {
+    private static boolean remux(MediaExtractor extractor, int track, MediaFormat format, File dst,
+                                Progress progress, long durationUs) {
         MediaMuxer muxer = null;
         try {
             extractor.selectTrack(track);
@@ -183,6 +208,7 @@ final class AudioNormalizer {
             muxer.start();
 
             MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
+            int reported = 0;
             while (true) {
                 int size = extractor.readSampleData(buffer, 0);
                 if (size < 0) break;
@@ -192,6 +218,7 @@ final class AudioNormalizer {
                 info.flags = MediaCodec.BUFFER_FLAG_KEY_FRAME;
                 muxer.writeSampleData(outTrack, buffer, info);
                 extractor.advance();
+                reported = report(progress, reported, info.presentationTimeUs, durationUs);
             }
             muxer.stop();
             return true;
@@ -216,7 +243,8 @@ final class AudioNormalizer {
      * 16 KB PCM chunk is four AAC frames. Measured against the fake codecs in local/verify-audio,
      * that cost 19.2 s of dead waiting per minute of stereo 44.1 kHz audio, where this pump waits 0.
      */
-    private static boolean transcode(MediaExtractor extractor, int track, MediaFormat srcFormat, File dst) {
+    private static boolean transcode(MediaExtractor extractor, int track, MediaFormat srcFormat, File dst,
+                                    Progress progress, long durationUs) {
         MediaCodec decoder = null;
         MediaCodec encoder = null;
         MediaMuxer muxer = null;
@@ -240,6 +268,8 @@ final class AudioNormalizer {
             boolean decodeDone = false;
             boolean encodeInputDone = false;
             long idleSince = 0;     // when the pump last moved nothing, to catch a codec gone silent
+            long totalFrames = 0;   // PCM frames the source says it holds, for progress
+            int reported = 0;
 
             while (true) {
                 boolean moved = false;
@@ -278,6 +308,7 @@ final class AudioNormalizer {
                         int channels = pcmFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT);
                         if (sampleRate <= 0 || channels <= 0) return false;
                         bytesPerFrame = 2 * channels;
+                        totalFrames = durationUs / 1_000L * sampleRate / 1_000L;
                         encoder = startEncoder(sampleRate, channels);
                         moved = true;
                     } else if (index >= 0) {
@@ -310,6 +341,7 @@ final class AudioNormalizer {
                     pcm.limit(limit);
                     encoder.queueInputBuffer(index, 0, size, 1_000_000L * framesQueued / sampleRate, 0);
                     framesQueued += size / bytesPerFrame;
+                    reported = report(progress, reported, framesQueued, totalFrames);
                     if (!pcm.hasRemaining()) {
                         decoder.releaseOutputBuffer(pcmIndex, false);
                         pcmIndex = -1;

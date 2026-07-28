@@ -5,6 +5,7 @@ import android.content.Context;
 import android.content.ContextWrapper;
 import android.net.Uri;
 import android.view.View;
+import android.widget.ProgressBar;
 import android.widget.Toast;
 
 import java.io.File;
@@ -30,7 +31,8 @@ import app.revanced.extension.dcinside.settings.Settings;
  *
  * Flow: upload button -> {@link AudioPickerActivity} (SAF {@code ACTION_GET_CONTENT audio/*}) ->
  * {@link #deliver(Uri)} -> normalize the picked audio into the record file -> finalize. Submit then
- * uploads it unchanged (RECORD input type).
+ * uploads it unchanged (RECORD input type). A conversion drives the progress bar the resource patch
+ * added to the record area (id {@code voice_recorder_convert_progress}).
  *
  * Uses named nested classes rather than lambdas/anonymous classes: the extension compiles against
  * android.jar with the JDK bootclasspath stripped (no {@code LambdaMetafactory}), and d8 rejects
@@ -41,6 +43,9 @@ public final class VoiceFilePicker {
 
     private static final String M_TARGET = "revancedVoiceTarget";
     private static final String M_FINALIZE = "revancedVoiceFinalize";
+
+    private static final String ID_UPLOAD_BUTTON = "voice_recorder_file_pick";
+    private static final String ID_CONVERT_PROGRESS = "voice_recorder_convert_progress";
 
     /**
      * Switch registered by {@code VoiceFilePickerPatch}: upload the picked file byte-for-byte, even
@@ -57,7 +62,7 @@ public final class VoiceFilePicker {
         try {
             Context ctx = recordView.getContext();
             int id = ctx.getResources().getIdentifier(
-                    "voice_recorder_file_pick", "id", ctx.getPackageName());
+                    ID_UPLOAD_BUTTON, "id", ctx.getPackageName());
             if (id == 0) return;
             View button = recordView.findViewById(id);
             if (button == null) return;
@@ -125,6 +130,20 @@ public final class VoiceFilePicker {
         }
     }
 
+    /** The conversion progress bar in the record area, or null if the layout patch is not applied. */
+    private static ProgressBar convertProgress(View recordView) {
+        try {
+            Context ctx = recordView.getContext();
+            int id = ctx.getResources().getIdentifier(
+                    ID_CONVERT_PROGRESS, "id", ctx.getPackageName());
+            if (id == 0) return null;
+            View view = recordView.findViewById(id);
+            return view instanceof ProgressBar ? (ProgressBar) view : null;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
     /** Upload-button click -> open the picker. */
     private static final class UploadClick implements View.OnClickListener {
         private final View recordView;
@@ -165,15 +184,67 @@ public final class VoiceFilePicker {
                 recordView.post(new FinishTask(recordView, "지원하지 않는 오디오 파일입니다."));
                 return;
             }
-            // A copy is instant; only a remux/transcode is worth telling the user to wait for.
-            if (plan != AudioNormalizer.PLAN_COPY) {
+            // A copy is instant; only a remux/transcode is worth a notice and a progress bar.
+            boolean converting = plan != AudioNormalizer.PLAN_COPY;
+            AudioNormalizer.Progress reporter = null;
+            if (converting) {
                 recordView.post(new ToastTask(recordView, "오디오를 변환하는 중..."));
+                recordView.post(new ProgressTask(recordView, ProgressTask.START));
+                reporter = new ProgressReporter(recordView);
             }
-            boolean ok = AudioNormalizer.normalize(context, source, target, plan);
+            boolean ok = AudioNormalizer.normalize(context, source, target, plan, reporter);
+            if (converting) recordView.post(new ProgressTask(recordView, ProgressTask.HIDE));
             recordView.post(new FinishTask(recordView, ok ? null
                     : plan == AudioNormalizer.PLAN_COPY
                     ? "오디오 파일을 불러올 수 없습니다."
                     : "오디오 변환에 실패했습니다."));
+        }
+    }
+
+    /** Import thread -> UI thread, once per whole percent of the conversion. */
+    private static final class ProgressReporter implements AudioNormalizer.Progress {
+        private final View recordView;
+
+        ProgressReporter(View recordView) {
+            this.recordView = recordView;
+        }
+
+        @Override
+        public void onProgress(int percent) {
+            recordView.post(new ProgressTask(recordView, percent));
+        }
+    }
+
+    /** UI thread: show, advance or hide the conversion progress bar. */
+    private static final class ProgressTask implements Runnable {
+        /** Shown but indeterminate: a source that does not state its duration never reports a percent. */
+        static final int START = -1;
+        static final int HIDE = -2;
+
+        private final View recordView;
+        private final int percent;
+
+        ProgressTask(View recordView, int percent) {
+            this.recordView = recordView;
+            this.percent = percent;
+        }
+
+        @Override
+        public void run() {
+            ProgressBar bar = convertProgress(recordView);
+            if (bar == null) return;
+            if (percent == HIDE) {
+                bar.setVisibility(View.GONE);
+                return;
+            }
+            if (percent == START) {
+                bar.setProgress(0);
+                bar.setIndeterminate(true);
+            } else {
+                if (bar.isIndeterminate()) bar.setIndeterminate(false);
+                bar.setProgress(percent);
+            }
+            bar.setVisibility(View.VISIBLE);
         }
     }
 

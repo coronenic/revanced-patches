@@ -46,11 +46,14 @@ anonymous-in-anonymous). Use named nested classes.
 ### voice reply file upload
 
 - `VoiceFilePicker.java` — the flow: upload button → picker → normalize into the recorder's output
-  file → the view's own finalize. Announces "오디오를 변환하는 중..." only when the import actually
-  converts something.
+  file → the view's own finalize. Announces "오디오를 변환하는 중..." and drives the progress bar in
+  the record area only when the import actually converts something. The bar starts indeterminate and
+  goes determinate on the first percent, so a source that does not state its duration still shows
+  activity.
 - `AudioNormalizer.java` — `plan()` classifies the picked audio (copy / remux / transcode /
-  unsupported), `normalize()` carries it out. The transcode is a single streaming pass with
-  zero-timeout polls; see the class comment for why the two-pass version was slow.
+  unsupported), `normalize()` carries it out and reports progress against the track duration. The
+  transcode is a single streaming pass with zero-timeout polls; see the class comment for why the
+  two-pass version was slow.
 - `AudioPickerActivity.java` — transparent proxy that owns the `ACTION_GET_CONTENT` result.
 
 ## Build the dexes (no gradle needed)
